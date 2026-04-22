@@ -3,8 +3,40 @@ import axios from "axios";
 import "./App.css";
 import TaglineSection from "./TaglineSection";
 
+/**
+ * Resolve the API base URL for browser and containerized environments.
+ */
+const getApiUrl = () => {
+  const configuredUrl = process.env.REACT_APP_API_URL?.trim();
+
+  if (typeof window === "undefined") {
+    return configuredUrl || "http://localhost:8000";
+  }
+
+  const fallbackUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
+
+  if (!configuredUrl) {
+    return fallbackUrl;
+  }
+
+  try {
+    const parsedUrl = new URL(configuredUrl);
+
+    // Docker service names work between containers, but not from the browser.
+    if (["backend", "frontend", "postgres"].includes(parsedUrl.hostname)) {
+      parsedUrl.hostname = window.location.hostname;
+    }
+
+    return parsedUrl.toString().replace(/\/$/, "");
+  } catch {
+    return fallbackUrl;
+  }
+};
+
+const API_URL = getApiUrl();
+
 const api = axios.create({
-  baseURL: "http://localhost:8000",
+  baseURL: API_URL,
 });
 
 function App() {
@@ -43,7 +75,9 @@ function App() {
     }
   }, [error]);
 
-  // Fetch all products
+  /**
+   * Fetch the latest list of products from the backend.
+   */
   const fetchProducts = async () => {
     setLoading(true);
     try {
@@ -52,27 +86,18 @@ function App() {
       setError("");
     } catch (err) {
       setError("Failed to fetch products");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
-    // Inline initial fetch to avoid referencing external deps
-    const run = async () => {
-      setLoading(true);
-      try {
-        const res = await api.get("/products/");
-        setProducts(res.data);
-        setError("");
-      } catch (err) {
-        setError("Failed to fetch products");
-      }
-      setLoading(false);
-    };
-    run();
+    fetchProducts();
   }, []);
 
-  // Handle sorting
+  /**
+   * Toggle sorting for the given column.
+   */
   const handleSort = (field) => {
     if (sortField === field) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -84,12 +109,12 @@ function App() {
 
   // Derived list with filter and sorting
   const filteredProducts = useMemo(() => {
-    let filtered = products;
+    let filtered = [...products];
     
     // Apply filter
     const q = filter.trim().toLowerCase();
     if (q) {
-      filtered = products.filter((p) =>
+      filtered = filtered.filter((p) =>
         String(p.id).includes(q) ||
         p.name?.toLowerCase().includes(q) ||
         p.desc?.toLowerCase().includes(q)
@@ -117,18 +142,24 @@ function App() {
     });
   }, [products, filter, sortField, sortDirection]);
 
-  // Handle form input
+  /**
+   * Update the form state when an input value changes.
+   */
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  // Reset form
+  /**
+   * Reset the form to its default empty state.
+   */
   const resetForm = () => {
     setForm({ id: "", name: "", desc: "", price: "", quantity: "" });
     setEditId(null);
   };
 
-  // Create or update product
+  /**
+   * Create a new product or update the selected one.
+   */
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -160,7 +191,9 @@ function App() {
     setLoading(false);
   };
 
-  // Edit product
+  /**
+   * Load the selected product into the edit form.
+   */
   const handleEdit = (product) => {
     setForm({
       id: product.id,
@@ -174,7 +207,9 @@ function App() {
     setError("");
   };
 
-  // Delete product
+  /**
+   * Delete a product after user confirmation.
+   */
   const handleDelete = async (id) => {
     const ok = window.confirm("Delete this product?");
     if (!ok) return;
@@ -191,6 +226,9 @@ function App() {
     setLoading(false);
   };
 
+  /**
+   * Format numeric values as a two-decimal currency string.
+   */
   const currency = (n) =>
     typeof n === "number" ? n.toFixed(2) : Number(n || 0).toFixed(2);
 
@@ -335,7 +373,7 @@ function App() {
                         <td>{p.id}</td>
                         <td className="name-cell">{p.name}</td>
                         <td className="desc-cell" title={p.desc}>{p.desc}</td>
-                        <td className="price-cell">${currency(p.price)}</td>
+                        <td className="price-cell">₹{currency(p.price)}</td>
                         <td>
                           <span className="qty-badge">{p.quantity}</span>
                         </td>
