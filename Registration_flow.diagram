@@ -1,0 +1,38 @@
+REGISTRATION
+────────────
+"mySecret123"
+      │
+      ├── + random salt "a3f8c21d"
+      │
+      └──► hash_password()
+                │
+                │  PBKDF2 × 100,000 rounds
+                │
+                ▼
+     DB stores: "a3f8c21d$4aef92bc"
+
+
+LOGIN (later)
+─────────────
+User types: "mySecret123"
+DB contains: "a3f8c21d$4aef92bc"
+                    │
+          split("$")│
+          ┌─────────┴──────────┐
+          │                    │
+        salt               stored_digest
+      "a3f8c21d"           "4aef92bc"
+          │
+          ▼
+  hash_password("mySecret123", "a3f8c21d")
+          │
+          ▼
+  candidate: "a3f8c21d$4aef92bc"
+          │
+          ▼
+  compare_digest(candidate, stored)
+          │
+     ┌────┴────┐
+    MATCH    NO MATCH
+     ✅         ❌
+   True       False

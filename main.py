@@ -1,227 +1,268 @@
 
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from models import Products
+from fastapi import Depends, FastAPI, HTTPException, status   # Importing of FastAPI request handling and HTTP exception utilities.
+from fastapi.middleware.cors import CORSMiddleware            # CORS middleware so the React frontend can call this API.
+from sqlalchemy.orm import Session                            # SQLAlchemy session support for database operations.
 
-import database_models
+import database_models                                        # Local database models, auth helpers, and Pydantic request/response schemas.
+                                                            #This module wires together authentication, product routes, database seeding,
+                                                            #  and shared response formatting for the demo application.
 from database_connection import engine, session
-from sqlalchemy.orm import Session
+database_models.Base.metadata.create_all(bind=engine)    # Creates all tables on startup if they don't exist. Safe to call repeatedly.
 
-database_models.Base.metadata.create_all(bind=engine)
+
+from auth import (
+    ROLE_PERMISSIONS,
+    authenticate_user,
+    create_access_token,
+    create_user,
+    get_current_user,
+    require_read_access,
+    require_write_access,
+)
+
+from models import CreateUserRequest, LoginRequest, LoginResponse, Products, UserResponse
+
+
+
 
 app = FastAPI()
+
+
+## Allows the React frontend (on port 3000) to make cross-origin requests.
 app.add_middleware(
-    CORSMiddleware, 
+    CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_methods=["*"]
-    # allow_headers=["X-Requested-With", "Content-Type"]
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 
 @app.get("/")
 def greet():
+    """Return a simple welcome message for the API root."""
     return "Welcome to fast api demo project"
 
 
-# products = [
-#     { 
-#         "id":1,
-#         "name": "Laptop",
-#         "desc" : "This is an HP 10th GEN Laptop",
-#         "price": "5000",
-#         "quantity": 10
 
-#     }
-   
-# ]
-
-
-# Step 2 --> This version shows the disadvantages of having this approach that client can update any type of data as its not being validatated
-
-# prod = [
-#     Products(1,"DELL Inspiron 22","This is a dell laptop",55000, quantity= 6),
-#     Products(2,"HP Pavilion","This is a HP laptop",45000, quantity=11),
-#     Products(-5,"A"," ",-1000, quantity='12'),
-#         ]
-
-
-
-# Step 3 --> Pydantic approach 
-
+### Hardcoding some products to seed the database on startup. In a real application, you might load this from a file or external service instead.
 prod = [
-    Products(id =1, name="DELL Inspiron 22",desc="This is a dell laptop",price=55000, quantity= 6),
-    Products(id=2, name="HP Pavilion", desc="This is a HP laptop", price=45000, quantity=11),
-    Products(id=3, name="Samsung S25 Ultra", desc="This is a samsung mobile phone", price=125000, quantity=5),
-    Products(id=4, name="One plus 12", desc="This is an Oneplus mobile phone", price=95000, quantity=8),
-    Products(id=5, name="iphone18", desc="This is an Apple iPhone", price=145000, quantity=10)
+    Products(
+        id=1,
+        name="DELL Inspiron 22",
+        desc="This is a dell laptop",
+        price=55000,
+        quantity=6,
+    ),
+    Products(
+        id=2,
+        name="HP Pavilion",
+        desc="This is a HP laptop",
+        price=45000,
+        quantity=11,
+    ),
+    Products(
+        id=3,
+        name="Samsung S25 Ultra",
+        desc="This is a samsung mobile phone",
+        price=125000,
+        quantity=5,
+    ),
+    Products(
+        id=4,
+        name="One plus 12",
+        desc="This is an Oneplus mobile phone",
+        price=95000,
+        quantity=8,
+    ),
+    Products(
+        id=5,
+        name="iphone18",
+        desc="This is an Apple iPhone",
+        price=145000,
+        quantity=10,
+    ),
 ]
 
-
-
-###-----------------------------------------------------------------From database-----------------------------------------------------------------------###
-
-
-### Initializing the database instance 
-
 def init_db():
-    db = session()
-    count = db.query(database_models.Product).count
-    if count ==0:
-        for product in prod:
-            db.add(database_models.Product(**product.model_dump()))
-        db.commit()
-    
-init_db()
+    """Seed the product table with demo data when it is empty.model_dump() converts a Pydantic model to a plain dict for unpacking into the SQLAlchemy model constructor.
+        Check product count
+            ↓
+        If 0 → insert predefined list
+            ↓
+        Commit to DB
+    """
 
-
-### creating an instance to update the data
-
-def get_db():
     db = session()
     try:
-        yield db
-    except Exception as e:
-        print(e)
+        product_count = db.query(database_models.Product).count()
+        if product_count == 0:
+            for product in prod:
+                db.add(database_models.Product(**product.model_dump()))
+            db.commit()
     finally:
         db.close()
 
 
+init_db()
 
-## Getting all products
+
+def get_db():
+    """Creates a database session for each request."""
+    db = session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def user_to_response(current_user) -> UserResponse:
+    """Convert an authenticated user object into the API response model."""
+    return UserResponse(
+        username=current_user.username,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        role=current_user.role,
+        permissions=list(current_user.permissions),
+    )
+
+
+def db_user_to_response(user: database_models.User) -> UserResponse:
+    """Convert a database user row into the API response model."""
+    return UserResponse(
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        permissions=list(ROLE_PERMISSIONS.get(user.role, tuple())),
+    )
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    """Validate credentials and return a signed bearer token."""
+    user = authenticate_user(db, payload.username, payload.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+
+    return LoginResponse(
+        access_token=create_access_token(user),
+        user=db_user_to_response(user),
+    )
+
+
+@app.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_user(payload: CreateUserRequest, db: Session = Depends(get_db)):
+    """Register a new user when the allowlist and role rules pass."""
+    user = create_user(
+        db=db,
+        username=payload.username,
+        email=payload.email,
+        password=payload.password,
+        full_name=payload.full_name,
+        role=payload.role,
+    )
+    return db_user_to_response(user)
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def get_logged_in_user(current_user=Depends(get_current_user)):
+    """Return details for the currently authenticated user."""
+    return user_to_response(current_user)
+
 
 @app.get("/products/")
-def get_products(db: Session = Depends(get_db)): ###This is dependency injection
-    db_products = db.query(database_models.Product).all()
-    return db_products
+def get_products(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_read_access),
+):
+    """Return all products for users with read access."""
+    return db.query(database_models.Product).all()
 
-
-# ## Getting a spcific product with id
 
 @app.get("/products/{id}")
-def get_product_with_id(id:int,db: Session= Depends(get_db)): ###This is dependency injection
-    db_products = db.query(database_models.Product).filter(database_models.Product.id==id).first()
-    if db_products:
-        return db_products
-        
-    return "Product Not Found"
+def get_product_with_id(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_read_access),
+):
+    """Return one product by id for users with read access."""
+    db_product = db.query(database_models.Product).filter(
+        database_models.Product.id == id
+    ).first()
+    if db_product:
+        return db_product
 
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Product with id {id} not found",
+    )
 
-
-
-
-# ### Adding a specifc product 
 
 @app.post("/products/")
-def add_product(product: Products, db: Session= Depends(get_db)):
+def add_product(
+    product: Products,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_write_access),
+):
+    """Create a product for users with write access."""
+    existing_product = db.query(database_models.Product).filter(
+        database_models.Product.id == product.id
+    ).first()
+    if existing_product:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product with id {product.id} already exists",
+        )
+
     db.add(database_models.Product(**product.model_dump()))
     db.commit()
     return product
-    
 
-
-# ### updating a product
 
 @app.put("/products/{id}")
-def update_product(id: int, product: Products,db: Session= Depends(get_db)):
-    db_products = db.query(database_models.Product).filter(database_models.Product.id==id).first()
-    if db_products:
-        db_products.name = product.name
-        db_products.desc = product.desc
-        db_products.price = product.price
-        db_products.quantity = product.quantity
-        db.commit()
-        return "product added succesfully"
-    return f"Product with id {id} not found"
+def update_product(
+    id: int,
+    product: Products,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_write_access),
+):
+    """Update a product by id for users with write access."""
+    db_product = db.query(database_models.Product).filter(
+        database_models.Product.id == id
+    ).first()
+    if not db_product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with id {id} not found",
+        )
 
+    db_product.name = product.name
+    db_product.desc = product.desc
+    db_product.price = product.price
+    db_product.quantity = product.quantity
+    db.commit()
+    return "Product updated successfully"
 
-
-
-
-
-## Deleting this product 
 
 @app.delete("/products/{id}")
-def delete_product(id:int, db: Session= Depends(get_db)):
-    db_products = db.query(database_models.Product).filter(database_models.Product.id==id).first()
-    if db_products:
-        db.delete(db_products)
-        db.commit()
-        return "Product deleted successfully"
-    return f"Product with id {id} not found"
-            
-    
+def delete_product(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_write_access),
+):
+    """Delete a product by id for users with write access."""
+    db_product = db.query(database_models.Product).filter(
+        database_models.Product.id == id
+    ).first()
+    if not db_product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with id {id} not found",
+        )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-###-----------------------------------------------------------------From python file-----------------------------------------------------------------------###
-
-# @app.get("/products")
-# def get_products():
-#     # return "All the products returned"
-#     return prod
-
-
-
-# ## Getting a spcific product with id
-
-# @app.get("/product/{id}")
-# def get_product_with_id(id:int):
-#     for product in prod:
-#         print(f"product is {product} and its type is {type(product)}")
-#         print(product.id)
-#         print(f"product.id is {product.id} and its type is {type(product.id)}")
-#         print(f"id is {id} and its type is {type(id)}")
-#         if product.id == id:
-#             return product
-        
-#     return "Product Not Found"
-
-
-
-# ### Adding a specifc product 
-
-# @app.post("/product")
-# def add_product(product: Products):
-#     prod.append(product)
-#     return product
-
-
-# ### updating a product
-
-# @app.put("/product")
-# def update_product(id: int, product: Products):
-#     for i in range(len(prod)):
-#         if prod[i].id==id:
-#             prod[i]=product
-#             return "product added succesfully"
-#     return f"Product with id {id} not found"
-
-
-
-# ## Deleting this product 
-
-# @app.delete("/product")
-# def delete_product(id:int):
-#     for i in range(len(prod)):
-#         if prod[i].id ==id:
-#             del prod[i]
-#             return "Product deleted successfully"
-#     return f"Product with id {id} not found"
-            
-    
+    db.delete(db_product)
+    db.commit()
+    return "Product deleted successfully"

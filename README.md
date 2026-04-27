@@ -7,6 +7,9 @@ A demonstration project showcasing a full-stack application with a FastAPI backe
 - **Backend (FastAPI)**:
   - RESTful API for product management
   - CRUD operations: Create, Read, Update, Delete products
+  - Database-backed authentication
+  - Password hashing and bearer-token sessions
+  - Role-based permissions for read-only and write access
   - Data validation using Pydantic models
   - CORS middleware for frontend integration
   - PostgreSQL database integration with SQLAlchemy
@@ -68,6 +71,20 @@ A demonstration project showcasing a full-stack application with a FastAPI backe
    - Create a database named `fastapi_db`.
    - Update the database URL in `database_connection.py` if necessary (default: `postgresql://postgres:root@localhost:5432/fastapi_db`).
 
+6. **Create users**:
+   - Start the backend and frontend.
+   - Open the frontend login page.
+   - Switch to the `Register` tab and create users in the database.
+   - Registration only works when the entered full name, email, and selected role match an approved combination from `auth.py`.
+   - Available roles:
+     - `admin` - read and write access
+      - `editor` - read and write access
+      - `viewer` - read-only access
+   - Current approved registrations:
+     - `admin`: `("Alok", "aloksri2204@gmail.com")`
+     - `admin`: `("Rohit", "rohit@gmail.com")`
+     - `viewer`: `("Priya", "priya@example.com")`
+
 ### Frontend Setup
 
 1. **Navigate to the frontend directory**:
@@ -106,17 +123,62 @@ A demonstration project showcasing a full-stack application with a FastAPI backe
 ## API Endpoints
 
 - `GET /` - Welcome message
+- `POST /auth/register` - Create a user in the database
+- `POST /auth/login` - Authenticate and return a bearer token
+- `GET /auth/me` - Return the logged-in user from the bearer token
 - `GET /products/` - Retrieve all products
 - `GET /products/{id}` - Retrieve a specific product by ID
 - `POST /products/` - Create a new product
 - `PUT /products/{id}` - Update an existing product
 - `DELETE /products/{id}` - Delete a product
 
+## Method Summary
+
+### `auth.py`
+
+- `_get_secret_key()` - Reads the secret key used to sign and verify bearer tokens.
+- `_normalize_full_name()` - Normalizes a name before comparing it against the allowlist.
+- `_normalize_email()` - Normalizes an email before validation and storage.
+- `_allowed_registration_pairs_for_role()` - Returns the approved name/email pairs for one role.
+- `_is_allowed_registration()` - Checks whether a user is allowed to register for a specific role.
+- `_urlsafe_b64encode()` - Encodes token parts in URL-safe base64 format.
+- `_urlsafe_b64decode()` - Decodes token parts from URL-safe base64 format.
+- `hash_password()` - Creates a salted password hash for storing user passwords safely.
+- `verify_password()` - Verifies a plain password against the stored password hash.
+- `create_access_token()` - Creates a signed bearer token for a logged-in user.
+- `decode_access_token()` - Validates and decodes a bearer token.
+- `_unauthorized_exception()` - Builds the standard unauthorized response.
+- `_forbidden_exception()` - Builds the standard forbidden response.
+- `_serialize_user()` - Converts a database user row into the internal auth user format.
+- `authenticate_user()` - Authenticates a user by username and password.
+- `create_user()` - Registers a user after validating role rules and allowlist rules.
+- `get_current_user()` - Reads the bearer token and returns the current user.
+- `require_read_access()` - Allows only users with read permission.
+- `require_write_access()` - Allows only users with write permission.
+
+### `main.py`
+
+- `greet()` - Returns the root welcome message.
+- `init_db()` - Seeds the product table when it is empty.
+- `get_db()` - Creates and closes a database session for each request.
+- `user_to_response()` - Converts the authenticated user into the API response shape.
+- `db_user_to_response()` - Converts a database user row into the API response shape.
+- `login()` - Validates login credentials and returns a signed token.
+- `register_user()` - Registers a user if the allowlist and role checks pass.
+- `get_logged_in_user()` - Returns the details of the currently logged-in user.
+- `get_products()` - Returns all products for users with read access.
+- `get_product_with_id()` - Returns a single product by id.
+- `add_product()` - Creates a new product for users with write access.
+- `update_product()` - Updates an existing product for users with write access.
+- `delete_product()` - Deletes a product for users with write access.
+
 ## Usage
 
 1. Start both the backend and frontend servers as described above.
 2. Open your browser and navigate to `http://localhost:3000`.
-3. Use the interface to view, add, edit, and delete products.
+3. Register a user if the database does not already contain one.
+4. Sign in to receive a bearer-token session.
+5. Use the interface to view, add, edit, and delete products according to that user's role.
 
 ## Project Structure
 
